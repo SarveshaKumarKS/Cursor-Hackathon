@@ -17,6 +17,8 @@ export default function Header({
   soundOn,
   onToggleSound,
   onResetSession,
+  onNewProject,
+  onEditAvailability,
 }) {
   return (
     <header className="mb-6 rounded-2xl border border-zinc-700/70 bg-black/40 p-5 backdrop-blur">
@@ -54,6 +56,28 @@ export default function Header({
               ))}
             </select>
           </label>
+
+          {onNewProject ? (
+            <button
+              type="button"
+              onClick={onNewProject}
+              className="rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold uppercase tracking-wide text-amber-950 hover:bg-amber-400"
+              title="Set up a new project"
+            >
+              + New project
+            </button>
+          ) : null}
+
+          {onEditAvailability ? (
+            <button
+              type="button"
+              onClick={onEditAvailability}
+              className="rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-2 text-xs font-bold uppercase tracking-wide text-zinc-300 transition hover:border-cyan-400/60 hover:text-cyan-200"
+              title="Edit your weekly availability"
+            >
+              Availability
+            </button>
+          ) : null}
 
           <button
             type="button"

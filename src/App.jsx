@@ -3,6 +3,16 @@ import { supabase } from "./lib/supabase";
 import { computePulse, pulseBackgroundClass, PULSE } from "./lib/pulse";
 import { TOAST_LABELS, XP } from "./lib/xp";
 import { sounds } from "./lib/sound";
+import {
+  canCheer,
+  canChallenge,
+  canSpark,
+  canStart,
+  isInAvailability,
+  nextAvailabilityStart,
+  windowState,
+} from "./lib/eligibility";
+import { buildCoachHints } from "./lib/coach";
 
 import Header from "./components/Header";
 import MemberCard from "./components/MemberCard";
@@ -15,6 +25,10 @@ import BackgroundFX from "./components/BackgroundFX";
 import CheerReactions from "./components/CheerReactions";
 import BattleLog from "./components/BattleLog";
 import ComboMeter from "./components/ComboMeter";
+import ProjectBanner from "./components/ProjectBanner";
+import ProjectWizard from "./components/ProjectWizard";
+import AvailabilityEditor from "./components/AvailabilityEditor";
+import CoachStrip from "./components/CoachStrip";
 
 const SPARK_COOLDOWN_MS = 60 * 1000;
 const CROWD_VOUCH_WINDOW_MS = 30 * 1000;
@@ -94,6 +108,13 @@ export default function App() {
   const [flashingVouchedId, setFlashingVouchedId] = useState(null);
   const [verifiedStampId, setVerifiedStampId] = useState(null);
   const [ceremonyName, setCeremonyName] = useState(null);
+
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [availability, setAvailability] = useState([]);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [availabilityOpen, setAvailabilityOpen] = useState(false);
+  const [projectWonName, setProjectWonName] = useState(null);
 
   const cardRefs = useRef(new Map());
   const setCardRef = useCallback(
@@ -204,9 +225,42 @@ export default function App() {
   }, []);
 
   const handleMetaPayload = useCallback((payload) => {
-    if (payload.eventType !== "DELETE") {
-      setMeta(payload.new);
+    if (payload.eventType === "DELETE") return;
+
+    // Cross-tab reset detection: if every reset marker just became null,
+    // a Reset just happened elsewhere — clear local UI state too.
+    const after = payload.new;
+    const before = payload.old;
+    const isResetSnapshot =
+      after &&
+      after.first_vouch_at == null &&
+      after.first_mover_id == null &&
+      after.last_voucher_id == null &&
+      after.last_vouch_at == null &&
+      (after.combo_count ?? 0) === 0 &&
+      after.combo_multiplier_until == null;
+    const wasNonReset =
+      before &&
+      (before.first_vouch_at != null ||
+        before.first_mover_id != null ||
+        before.last_voucher_id != null ||
+        before.last_vouch_at != null ||
+        (before.combo_count ?? 0) !== 0 ||
+        before.combo_multiplier_until != null);
+    if (isResetSnapshot && wasNonReset) {
+      ceremonyFiredRef.current = false;
+      previousLeaderRef.current = null;
+      previousMetaFirstVouchRef.current = null;
+      previousMembersRef.current = [];
+      setEvents([]);
+      setRecentEvents([]);
+      setFlashingVouchedId(null);
+      setVerifiedStampId(null);
+      setStreaks([]);
+      setCheerReactions([]);
     }
+
+    setMeta(after);
   }, []);
 
   const handleEventPayload = useCallback(
@@ -239,15 +293,25 @@ export default function App() {
   // -------- Data fetching --------
 
   const fetchAll = useCallback(async () => {
-    const [membersRes, metaRes, eventsRes] = await Promise.all([
-      supabase.from("tribe_members").select("*"),
-      supabase.from("tribe_meta").select("*").eq("id", 1).maybeSingle(),
-      supabase
-        .from("tribe_events")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(EVENTS_LIMIT),
-    ]);
+    const [membersRes, metaRes, eventsRes, projectsRes, tasksRes, availRes] =
+      await Promise.all([
+        supabase.from("tribe_members").select("*"),
+        supabase.from("tribe_meta").select("*").eq("id", 1).maybeSingle(),
+        supabase
+          .from("tribe_events")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(EVENTS_LIMIT),
+        supabase
+          .from("projects")
+          .select("*")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("tasks")
+          .select("*")
+          .order("scheduled_start_at", { ascending: true }),
+        supabase.from("member_availability").select("*"),
+      ]);
 
     if (membersRes.error) {
       console.error("Failed to fetch members:", membersRes.error);
@@ -262,6 +326,12 @@ export default function App() {
     if (eventsRes.error) {
       console.error("Failed to fetch events:", eventsRes.error);
     }
+    if (projectsRes.error)
+      console.error("Failed to fetch projects:", projectsRes.error);
+    if (tasksRes.error)
+      console.error("Failed to fetch tasks:", tasksRes.error);
+    if (availRes.error)
+      console.error("Failed to fetch availability:", availRes.error);
 
     setMembers(membersRes.data ?? []);
     setMeta(
@@ -275,9 +345,13 @@ export default function App() {
         combo_count: 0,
         combo_last_at: null,
         combo_multiplier_until: null,
+        active_project_id: null,
       }
     );
     setEvents(eventsRes.data ?? []);
+    setProjects(projectsRes.data ?? []);
+    setTasks(tasksRes.data ?? []);
+    setAvailability(availRes.data ?? []);
     setLoadError("");
     setCurrentUserId((prev) => prev || membersRes.data?.[0]?.id || "");
   }, []);
@@ -295,6 +369,56 @@ export default function App() {
   }, [currentUserId]);
 
   // -------- Realtime subscription --------
+
+  // Generic upsert/delete handler for the new project-side tables. We just
+  // refetch the relevant slice on change — the volume here is tiny.
+  const handleProjectsPayload = useCallback((payload) => {
+    setProjects((prev) => {
+      if (payload.eventType === "DELETE") {
+        return prev.filter((p) => p.id !== payload.old.id);
+      }
+      const incoming = payload.new;
+      const idx = prev.findIndex((p) => p.id === incoming.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...incoming };
+        return next;
+      }
+      return [incoming, ...prev];
+    });
+  }, []);
+
+  const handleTasksPayload = useCallback((payload) => {
+    setTasks((prev) => {
+      if (payload.eventType === "DELETE") {
+        return prev.filter((t) => t.id !== payload.old.id);
+      }
+      const incoming = payload.new;
+      const idx = prev.findIndex((t) => t.id === incoming.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...incoming };
+        return next;
+      }
+      return [...prev, incoming];
+    });
+  }, []);
+
+  const handleAvailabilityPayload = useCallback((payload) => {
+    setAvailability((prev) => {
+      if (payload.eventType === "DELETE") {
+        return prev.filter((a) => a.id !== payload.old.id);
+      }
+      const incoming = payload.new;
+      const idx = prev.findIndex((a) => a.id === incoming.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...incoming };
+        return next;
+      }
+      return [...prev, incoming];
+    });
+  }, []);
 
   useEffect(() => {
     const channel = supabase
@@ -314,6 +438,21 @@ export default function App() {
         { event: "INSERT", schema: "public", table: "tribe_events" },
         handleEventPayload
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "projects" },
+        handleProjectsPayload
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tasks" },
+        handleTasksPayload
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "member_availability" },
+        handleAvailabilityPayload
+      )
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await fetchAll();
@@ -322,7 +461,15 @@ export default function App() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchAll, handleMemberPayload, handleMetaPayload, handleEventPayload]);
+  }, [
+    fetchAll,
+    handleMemberPayload,
+    handleMetaPayload,
+    handleEventPayload,
+    handleProjectsPayload,
+    handleTasksPayload,
+    handleAvailabilityPayload,
+  ]);
 
   // -------- Detect XP deltas to fire toasts --------
 
@@ -398,7 +545,6 @@ export default function App() {
       const toCenter = rectCenter(cardRefs.current.get(leaderId));
       fireStreak(fromCenter, toCenter, { gold: true, ttl: HANDOFF_MS });
       sounds.crown(soundOn);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setConfettiTrigger(uid());
     }
 
@@ -456,17 +602,138 @@ export default function App() {
     return Math.max(1, Math.ceil((SPARK_COOLDOWN_MS - elapsed) / 1000));
   }
 
-  function cheerRemaining(member) {
-    const until = cheerCooldowns[member.id] ?? 0;
-    return until > now ? Math.ceil((until - now) / 1000) : 0;
-  }
-
   function challengeSecondsLeft(member) {
     if (!member.challenge_expires_at) return 0;
     const t = new Date(member.challenge_expires_at).getTime();
     if (t <= now) return 0;
     return Math.ceil((t - now) / 1000);
   }
+
+  // -------- Project / task / availability derived values --------
+
+  const activeProject = useMemo(() => {
+    if (!meta?.active_project_id) return null;
+    return projects.find((p) => p.id === meta.active_project_id) ?? null;
+  }, [meta, projects]);
+
+  const activeProjectTasks = useMemo(() => {
+    if (!activeProject) return [];
+    return tasks.filter((t) => t.project_id === activeProject.id);
+  }, [tasks, activeProject]);
+
+  // Map: member_id -> their current task in the active project (most relevant).
+  // We pick the first non-verified/declined task scheduled the soonest.
+  const tasksByMember = useMemo(() => {
+    const map = new Map();
+    if (!activeProject) return map;
+    const sortedTasks = [...activeProjectTasks].sort(
+      (a, b) =>
+        Date.parse(a.scheduled_start_at) - Date.parse(b.scheduled_start_at)
+    );
+    for (const t of sortedTasks) {
+      if (!t.assignee_id) continue;
+      if (["verified", "declined", "expired"].includes(t.status)) {
+        if (!map.has(t.assignee_id)) map.set(t.assignee_id, t);
+        continue;
+      }
+      // Replace any earlier "completed" placeholder with the live task.
+      map.set(t.assignee_id, t);
+    }
+    return map;
+  }, [activeProject, activeProjectTasks]);
+
+  const availabilityByMember = useMemo(() => {
+    const map = new Map();
+    for (const slot of availability) {
+      if (!map.has(slot.member_id)) map.set(slot.member_id, []);
+      map.get(slot.member_id).push(slot);
+    }
+    return map;
+  }, [availability]);
+
+  // Per-member eligibility snapshots used by MemberCard. Computed once per
+  // tick (the heartbeat updates `now` every second).
+  const eligibilityByMember = useMemo(() => {
+    const map = new Map();
+    if (!currentUser) return map;
+    for (const m of members) {
+      const task = tasksByMember.get(m.id) ?? null;
+      const targetAvail = availabilityByMember.get(m.id) ?? [];
+      const ws = task ? windowState(task, now) : { kind: null };
+      const slotStart = !isInAvailability(targetAvail, now)
+        ? nextAvailabilityStart(targetAvail, now)
+        : null;
+      const sparkRes = canSpark({
+        actor: currentUser,
+        target: m,
+        targetTask: task,
+        targetAvailability: targetAvail,
+        lastSparkAt: currentUser.last_sparked_at,
+        when: now,
+      });
+      const challengeRes = canChallenge({
+        actor: currentUser,
+        target: m,
+        targetTask: task,
+        targetAvailability: targetAvail,
+        when: now,
+      });
+      // cheerCooldowns stores the unlock-at time, so the last-cheer time
+      // is unlock - cooldown. Falls back to null when no cheer happened.
+      const lastCheerAt = cheerCooldowns[m.id]
+        ? cheerCooldowns[m.id] - CHEER_COOLDOWN_MS
+        : null;
+      const cheerRes = canCheer({
+        actor: currentUser,
+        target: m,
+        targetAvailability: targetAvail,
+        lastCheerAt,
+        when: now,
+      });
+      const startRes = canStart(m, task, now);
+
+      const withRemaining = (res) => {
+        if (!res || res.ok) return res;
+        if (res.unlocksAt != null) {
+          return { ...res, unlocksInMs: Math.max(0, res.unlocksAt - now) };
+        }
+        return res;
+      };
+
+      map.set(m.id, {
+        task,
+        windowInfo: {
+          ...ws,
+          nextStartMs: slotStart,
+        },
+        sparkEligibility: withRemaining(sparkRes),
+        challengeEligibility: withRemaining(challengeRes),
+        cheerEligibility: withRemaining(cheerRes),
+        startEligibility: withRemaining(startRes),
+      });
+    }
+    return map;
+  }, [
+    currentUser,
+    members,
+    tasksByMember,
+    availabilityByMember,
+    cheerCooldowns,
+    now,
+  ]);
+
+  const coachHints = useMemo(
+    () =>
+      buildCoachHints({
+        currentUserId,
+        members,
+        tasksByMember,
+        availabilityByMember,
+        cheerCooldowns,
+        when: now,
+      }),
+    [currentUserId, members, tasksByMember, availabilityByMember, cheerCooldowns, now]
+  );
 
   // -------- Mutations --------
 
@@ -503,17 +770,28 @@ export default function App() {
 
   async function moveSelfToWorking() {
     if (!currentUser || currentUser.status !== "idle") return;
+    const myTask = tasksByMember.get(currentUser.id);
     setBusy(true);
     try {
-      const patch = { status: "working" };
+      // First-mover bookkeeping happens regardless of project mode — it's
+      // the once-per-session badge on tribe_meta.
+      const patch = {};
       if (currentUser.spark_streak > 0) patch.spark_streak = 0;
-
       const noOneHasMoved = members.every((m) => !m.first_mover);
       if (noOneHasMoved && !meta?.first_mover_id) {
         patch.first_mover = true;
       }
 
-      await updateMember(currentUser.id, patch);
+      if (myTask) {
+        // RPC also sets member.status='working' and stamps started_at.
+        const { error } = await supabase.rpc("start_task", { p_task: myTask.id });
+        if (error) throw error;
+        if (Object.keys(patch).length) {
+          await updateMember(currentUser.id, patch);
+        }
+      } else {
+        await updateMember(currentUser.id, { ...patch, status: "working" });
+      }
 
       if (patch.first_mover) {
         await updateMeta({ first_mover_id: currentUser.id });
@@ -525,6 +803,7 @@ export default function App() {
       }
     } catch (e) {
       console.error("moveSelfToWorking failed:", e);
+      pushToast("voucher", e?.message ?? "Could not start.");
     } finally {
       setBusy(false);
     }
@@ -532,9 +811,17 @@ export default function App() {
 
   async function moveSelfToDone() {
     if (!currentUser || currentUser.status !== "working") return;
+    const myTask = tasksByMember.get(currentUser.id);
     setBusy(true);
     try {
-      await updateMember(currentUser.id, { status: "done" });
+      if (myTask && myTask.status === "working") {
+        const { error } = await supabase.rpc("complete_task", {
+          p_task: myTask.id,
+        });
+        if (error) throw error;
+      } else {
+        await updateMember(currentUser.id, { status: "done" });
+      }
     } catch (e) {
       console.error("moveSelfToDone failed:", e);
     } finally {
@@ -547,6 +834,13 @@ export default function App() {
     if (target.id === currentUser.id) return;
     if (target.status !== "idle") return;
     if (sparkRemaining(target) > 0) return;
+
+    // Calendar-aware gate: refuse the spark and tell the user why.
+    const elig = eligibilityByMember.get(target.id)?.sparkEligibility;
+    if (elig && !elig.ok) {
+      pushToast("voucher", elig.reason ?? "Spark locked.");
+      return;
+    }
 
     setBusy(true);
     try {
@@ -576,6 +870,12 @@ export default function App() {
     if (target.status !== "idle") return;
     if (challengeSecondsLeft(target) > 0) return;
 
+    const elig = eligibilityByMember.get(target.id)?.challengeEligibility;
+    if (elig && !elig.ok) {
+      pushToast("voucher", elig.reason ?? "Challenge locked.");
+      return;
+    }
+
     setBusy(true);
     try {
       await updateMember(target.id, {
@@ -599,6 +899,13 @@ export default function App() {
     if (target.id === currentUser.id) return;
     const t = nowMs();
     if ((cheerCooldowns[target.id] || 0) > t) return;
+
+    const elig = eligibilityByMember.get(target.id)?.cheerEligibility;
+    if (elig && !elig.ok) {
+      pushToast("voucher", elig.reason ?? "Cheer locked.");
+      return;
+    }
+
     setCheerCooldowns((prev) => ({
       ...prev,
       [target.id]: t + CHEER_COOLDOWN_MS,
@@ -774,6 +1081,36 @@ export default function App() {
             payload: { xp: CHALLENGE_BONUS_XP },
           });
         }
+
+        // If the target was working a real task, flip it to verified
+        // server-side and check whether this completes the project.
+        const targetTask = tasksByMember.get(target.id);
+        if (targetTask && targetTask.status === "done") {
+          const { data, error: vouchErr } = await supabase.rpc("vouch_task", {
+            p_task: targetTask.id,
+            p_voucher: currentUser.id,
+          });
+          if (vouchErr) {
+            console.error("vouch_task RPC failed:", vouchErr);
+          } else {
+            const row = Array.isArray(data) ? data[0] : data;
+            if (row?.out_project_completed) {
+              const proj = activeProject;
+              if (proj) {
+                setProjectWonName(proj.name);
+                setConfettiTrigger(uid());
+                sounds.crown(soundOn);
+                setTimeout(() => setProjectWonName(null), CEREMONY_MS);
+                await insertEvent({
+                  kind: "project_won",
+                  actor_id: currentUser.id,
+                  target_id: target.id,
+                  payload: { project_id: proj.id, name: proj.name },
+                });
+              }
+            }
+          }
+        }
       } else if (eligibleCrowdVouch) {
         const updates = [];
         updates.push(
@@ -800,6 +1137,144 @@ export default function App() {
       console.error("vouch failed:", e);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function launchProject({ name, kind, goal, creator, tasks: payload }) {
+    const { error } = await supabase.rpc("create_project_with_tasks", {
+      p_name: name,
+      p_kind: kind,
+      p_goal: goal,
+      p_creator: creator,
+      p_tasks: payload,
+    });
+    if (error) throw error;
+    pushToast("voucher", `${name} launched · ${payload.length} tasks proposed`);
+    await fetchAll();
+  }
+
+  async function archiveActiveProject() {
+    if (!activeProject) return;
+    if (
+      !confirm(
+        `Archive "${activeProject.name}"? It will be moved out of the active slot but kept in history.`
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("archive_project", {
+        p_project: activeProject.id,
+      });
+      if (error) throw error;
+      pushToast("voucher", `${activeProject.name} archived`);
+    } catch (e) {
+      console.error("archive failed:", e);
+      pushToast("voucher", e?.message ?? "Archive failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptTask(taskId) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("accept_task", { p_task: taskId });
+      if (error) throw error;
+    } catch (e) {
+      console.error("accept_task failed:", e);
+      pushToast("voucher", e?.message ?? "Could not accept.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function declineTask(taskId) {
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("decline_task", { p_task: taskId });
+      if (error) throw error;
+    } catch (e) {
+      console.error("decline_task failed:", e);
+      pushToast("voucher", e?.message ?? "Could not decline.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Demo helper: fast-forward any member to 'done' regardless of who's
+  // currently selected, walking the task through the proper RPC chain so
+  // Vouch still works afterward. Useful for solo demos.
+  async function demoMarkDone(member) {
+    if (!member) return;
+    if (member.status === "done" || member.status === "verified") return;
+
+    const memberTask = tasksByMember.get(member.id);
+    setBusy(true);
+    try {
+      if (memberTask) {
+        if (memberTask.status === "accepted" || memberTask.status === "idle") {
+          const { error } = await supabase.rpc("start_task", {
+            p_task: memberTask.id,
+          });
+          if (error) throw error;
+        }
+        if (
+          memberTask.status === "working" ||
+          memberTask.status === "accepted" ||
+          memberTask.status === "idle"
+        ) {
+          const { error } = await supabase.rpc("complete_task", {
+            p_task: memberTask.id,
+          });
+          if (error) throw error;
+        }
+      } else {
+        if (member.status === "idle") {
+          await updateMember(member.id, { status: "working" });
+        }
+        await updateMember(member.id, { status: "done" });
+      }
+      pushToast("voucher", `${member.name} marked done (demo)`);
+    } catch (e) {
+      console.error("demoMarkDone failed:", e);
+      pushToast("voucher", e?.message ?? "Demo Done failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveAvailability(memberId, slots) {
+    const { error } = await supabase.rpc("set_availability", {
+      p_member: memberId,
+      p_slots: slots,
+    });
+    if (error) throw error;
+    pushToast("voucher", "Availability saved");
+  }
+
+  function handleCoachClick(hint) {
+    if (!hint?.targetId) return;
+    const node = cardRefs.current.get(hint.targetId);
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "center" });
+      node.classList.add("coach-flash");
+      setTimeout(() => node.classList.remove("coach-flash"), 1100);
+    }
+    if (hint.kind === "self_start" && hint.targetId === currentUserId) {
+      moveSelfToWorking();
+    } else if (hint.kind === "vouch_now") {
+      const target = membersById[hint.targetId];
+      if (target) vouchForDoneTask(target);
+    } else if (hint.kind === "spark_now") {
+      const target = membersById[hint.targetId];
+      if (target) sparkTeammate(target);
+    } else if (hint.kind === "challenge_now") {
+      const target = membersById[hint.targetId];
+      if (target) challengeTeammate(target);
+    } else if (hint.kind === "cheer_working") {
+      const target = membersById[hint.targetId];
+      if (target) cheerTeammate(target, "🔥");
     }
   }
 
@@ -842,7 +1317,20 @@ export default function App() {
           soundOn={soundOn}
           onToggleSound={() => setSoundOn((v) => !v)}
           onResetSession={resetSession}
+          onNewProject={() => setWizardOpen(true)}
+          onEditAvailability={() => setAvailabilityOpen(true)}
         />
+
+        <div className="mt-4">
+          <ProjectBanner
+            project={activeProject}
+            tasks={activeProjectTasks}
+            onNewProject={() => setWizardOpen(true)}
+            onArchive={archiveActiveProject}
+          />
+        </div>
+
+        <CoachStrip hints={coachHints} onHintClick={handleCoachClick} />
 
         <ComboMeter
           comboCount={comboCount}
@@ -862,10 +1350,14 @@ export default function App() {
               ,{" "}
               <code className="rounded bg-red-900 px-1 py-0.5">
                 tribe_leader_v2.sql
-              </code>{" "}
-              and{" "}
+              </code>
+              ,{" "}
               <code className="rounded bg-red-900 px-1 py-0.5">
                 tribe_leader_v3.sql
+              </code>
+              , and{" "}
+              <code className="rounded bg-red-900 px-1 py-0.5">
+                tribe_leader_v4.sql
               </code>{" "}
               in this Supabase project.
             </p>
@@ -901,19 +1393,32 @@ export default function App() {
                 const challenger = member.challenge_from
                   ? membersById[member.challenge_from]
                   : null;
+                const elig = eligibilityByMember.get(member.id) ?? {};
+                const showSelfStartHalo =
+                  isCurrent &&
+                  member.status === "idle" &&
+                  (elig.windowInfo?.kind === "grace" ||
+                    elig.windowInfo?.kind === "open" ||
+                    (showCtaHaloOnCurrent && !elig.task));
                 return (
                   <MemberCard
                     key={member.id}
                     member={member}
+                    task={elig.task}
+                    windowInfo={elig.windowInfo}
                     isCurrent={isCurrent}
                     isLeader={isLeader}
                     isPreTribe={isPreTribe}
                     sparkIssuer={sparkIssuer}
                     challenger={challenger}
                     challengeSecondsLeft={challengeSecondsLeft(member)}
-                    sparkCooldownRemaining={sparkRemaining(member)}
-                    cheerCooldownRemaining={cheerRemaining(member)}
-                    showCtaHalo={showCtaHaloOnCurrent && isCurrent}
+                    sparkEligibility={elig.sparkEligibility}
+                    challengeEligibility={elig.challengeEligibility}
+                    cheerEligibility={elig.cheerEligibility}
+                    startEligibility={
+                      elig.task ? elig.startEligibility : { ok: true }
+                    }
+                    showCtaHalo={showSelfStartHalo}
                     flashingVouched={flashingVouchedId === member.id}
                     showVerifiedStamp={verifiedStampId === member.id}
                     onStartWorking={moveSelfToWorking}
@@ -922,6 +1427,17 @@ export default function App() {
                     onVouch={() => vouchForDoneTask(member)}
                     onCheer={(emoji) => cheerTeammate(member, emoji)}
                     onChallenge={() => challengeTeammate(member)}
+                    onAcceptTask={
+                      isCurrent && elig.task?.status === "proposed"
+                        ? () => acceptTask(elig.task.id)
+                        : undefined
+                    }
+                    onDeclineTask={
+                      isCurrent && elig.task?.status === "proposed"
+                        ? () => declineTask(elig.task.id)
+                        : undefined
+                    }
+                    onDemoMarkDone={() => demoMarkDone(member)}
                     cardRef={setCardRef(member.id)}
                     busy={busy}
                     enterIndex={idx}
@@ -954,6 +1470,25 @@ export default function App() {
       <Confetti trigger={confettiTrigger} />
       <CheerReactions reactions={cheerReactions} />
       {ceremonyName ? <CrowningCeremony leaderName={ceremonyName} /> : null}
+      {projectWonName ? (
+        <CrowningCeremony leaderName={`PROJECT WON · ${projectWonName}`} />
+      ) : null}
+
+      <ProjectWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        members={members}
+        currentUserId={currentUserId}
+        onLaunch={launchProject}
+      />
+
+      <AvailabilityEditor
+        open={availabilityOpen}
+        onClose={() => setAvailabilityOpen(false)}
+        member={currentUser}
+        initialSlots={availabilityByMember.get(currentUserId) ?? []}
+        onSave={saveAvailability}
+      />
     </main>
   );
 }

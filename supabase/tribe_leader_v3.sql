@@ -54,10 +54,16 @@ begin
 end $$;
 
 -- 3. Reset session keeps the new state in sync.
+-- SECURITY DEFINER so the DELETE on tribe_events bypasses RLS
+-- (tribe_events has no DELETE policy by design — only the reset RPC clears it).
 create or replace function public.reset_tribe_session()
 returns void
 language sql
+security definer
+set search_path = public
 as $$
+  -- Supabase rejects UPDATE/DELETE without a WHERE clause (error 21000),
+  -- so use trivially-true predicates to scope each statement to all rows.
   update public.tribe_members
   set xp = 0,
       status = 'idle',
@@ -67,7 +73,8 @@ as $$
       spark_streak = 0,
       challenge_from = null,
       challenge_expires_at = null,
-      last_active_at = now();
+      last_active_at = now()
+  where id is not null;
 
   update public.tribe_meta
   set first_vouch_at = null,
@@ -80,7 +87,8 @@ as $$
       combo_multiplier_until = null
   where id = 1;
 
-  delete from public.tribe_events;
+  delete from public.tribe_events where id is not null;
 $$;
 
+revoke all on function public.reset_tribe_session() from public;
 grant execute on function public.reset_tribe_session() to anon, authenticated;
