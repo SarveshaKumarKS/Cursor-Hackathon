@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { computePulse, pulseBackgroundClass, PULSE } from "./lib/pulse";
-import { TOAST_LABELS, XP } from "./lib/xp";
+import { TOAST_LABELS, XP, STEP_UP_BONUS } from "./lib/xp";
 import { sounds } from "./lib/sound";
 import {
   canCheer,
   canChallenge,
+  canClaim,
   canSpark,
   canStart,
   isInAvailability,
@@ -16,6 +17,7 @@ import { buildCoachHints } from "./lib/coach";
 
 import Header from "./components/Header";
 import MemberCard from "./components/MemberCard";
+import OrphanTaskRail from "./components/OrphanTaskRail";
 import Leaderboard from "./components/Leaderboard";
 import Toasts from "./components/Toasts";
 import Confetti from "./components/Confetti";
@@ -483,7 +485,38 @@ export default function App() {
       const delta = m.xp - prev.xp;
       if (delta > 0 && m.id === currentUserId) {
         // Match the largest known reward first; multiplier x2 doubles them.
-        if (delta === XP.selfStarter * 2) pushToast("selfStarter", "x2 Combo");
+        // Worker rewards may carry a stacked bounty (10/20/30) on top of
+        // the base — peel it off so the toast still names the base path.
+        const bountyAware = (() => {
+          // Stacked bounties are multiples of STEP_UP_BONUS up to the cap;
+          // walk from largest to smallest so a +30 doesn't get peeled as +10.
+          const stacks = [3, 2, 1].map((n) => n * STEP_UP_BONUS);
+          for (const bonus of stacks) {
+            const base = delta - bonus;
+            if (base === XP.selfStarter * 2) {
+              return { base: "selfStarter", combo: true, steppedUp: true };
+            }
+            if (base === XP.selfStarter) {
+              return { base: "selfStarter", combo: false, steppedUp: true };
+            }
+            if (base === XP.sparkedWorker * 2) {
+              return { base: "sparkedWorker", combo: true, steppedUp: true };
+            }
+            if (base === XP.sparkedWorker) {
+              return { base: "sparkedWorker", combo: false, steppedUp: true };
+            }
+          }
+          return null;
+        })();
+
+        if (bountyAware) {
+          pushToast(
+            bountyAware.base,
+            bountyAware.combo ? "x2 Combo" : undefined
+          );
+          pushToast("steppedUp");
+        } else if (delta === XP.selfStarter * 2)
+          pushToast("selfStarter", "x2 Combo");
         else if (delta === XP.selfStarter) pushToast("selfStarter");
         else if (delta === XP.sparkedWorker * 2)
           pushToast("sparkedWorker", "x2 Combo");
@@ -520,7 +553,6 @@ export default function App() {
         ceremonyFiredRef.current = true;
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setCeremonyName(leader.name);
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setConfettiTrigger(uid());
         sounds.crown(soundOn);
         triggerCrowningStreaks(leader.id);
@@ -620,6 +652,19 @@ export default function App() {
     if (!activeProject) return [];
     return tasks.filter((t) => t.project_id === activeProject.id);
   }, [tasks, activeProject]);
+
+  // Orphan pool — proposed tasks with no assignee, sorted by deadline so
+  // urgent bounties surface first. (Assignee-less tasks are passes; we
+  // explicitly skip declined/expired/verified states.)
+  const orphanTasks = useMemo(() => {
+    return activeProjectTasks
+      .filter((t) => t.status === "proposed" && !t.assignee_id)
+      .sort((a, b) => {
+        const da = a.deadline_at ? Date.parse(a.deadline_at) : Infinity;
+        const db = b.deadline_at ? Date.parse(b.deadline_at) : Infinity;
+        return da - db;
+      });
+  }, [activeProjectTasks]);
 
   // Map: member_id -> their current task in the active project (most relevant).
   // We pick the first non-verified/declined task scheduled the soonest.
@@ -722,6 +767,23 @@ export default function App() {
     now,
   ]);
 
+  // Per-orphan claim eligibility for the current user.
+  const orphanEligibilityByTask = useMemo(() => {
+    const map = new Map();
+    if (!currentUser) return map;
+    const myAvail = availabilityByMember.get(currentUser.id) ?? [];
+    for (const task of orphanTasks) {
+      const res = canClaim({
+        actor: currentUser,
+        task,
+        actorAvailability: myAvail,
+        when: now,
+      });
+      map.set(task.id, res);
+    }
+    return map;
+  }, [currentUser, orphanTasks, availabilityByMember, now]);
+
   const coachHints = useMemo(
     () =>
       buildCoachHints({
@@ -730,9 +792,18 @@ export default function App() {
         tasksByMember,
         availabilityByMember,
         cheerCooldowns,
+        orphanTasks,
         when: now,
       }),
-    [currentUserId, members, tasksByMember, availabilityByMember, cheerCooldowns, now]
+    [
+      currentUserId,
+      members,
+      tasksByMember,
+      availabilityByMember,
+      cheerCooldowns,
+      orphanTasks,
+      now,
+    ]
   );
 
   // -------- Mutations --------
@@ -940,7 +1011,13 @@ export default function App() {
         const baseWorker = target.last_sparked_by
           ? XP.sparkedWorker
           : XP.selfStarter;
-        const workerXp = baseWorker * mult;
+        // Bounty (Stepped Up) is a flat one-shot bonus paid to whoever
+        // verified the task — does NOT multiply with the combo. It only
+        // attaches when the task carries a non-zero bounty_xp set by
+        // the pass_task RPC stack.
+        const targetTaskForBounty = tasksByMember.get(target.id);
+        const bountyXp = targetTaskForBounty?.bounty_xp ?? 0;
+        const workerXp = baseWorker * mult + bountyXp;
         const voucherXp = XP.voucher * mult;
         const sparkIssuerXp = (target.last_sparked_by ? XP.sparkIssuer : 0) * mult;
 
@@ -1202,6 +1279,48 @@ export default function App() {
     }
   }
 
+  // Pass = orphan the task with a +10 bounty (capped DB-side at +30) so a
+  // teammate who is free can step up and claim it. Only the current
+  // assignee may pass; anyone else hitting this is a no-op.
+  async function passTask(task) {
+    if (!task?.assignee_id) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("pass_task", {
+        p_task: task.id,
+        p_member: task.assignee_id,
+      });
+      if (error) throw error;
+      pushToast("voucher", `"${task.title}" up for grabs (+10 bounty)`);
+    } catch (e) {
+      console.error("pass_task failed:", e);
+      pushToast("voucher", e?.message ?? "Could not pass task.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claimTask(task) {
+    if (!currentUser) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("claim_task", {
+        p_task: task.id,
+        p_member: currentUser.id,
+      });
+      if (error) throw error;
+      pushToast(
+        "voucher",
+        `Claimed "${task.title}" — +${task.bounty_xp ?? 0} bounty waiting`
+      );
+    } catch (e) {
+      console.error("claim_task failed:", e);
+      pushToast("voucher", e?.message ?? "Could not claim task.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Demo helper: fast-forward any member to 'done' regardless of who's
   // currently selected, walking the task through the proper RPC chain so
   // Vouch still works afterward. Useful for solo demos.
@@ -1254,12 +1373,16 @@ export default function App() {
   }
 
   function handleCoachClick(hint) {
-    if (!hint?.targetId) return;
-    const node = cardRefs.current.get(hint.targetId);
-    if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
-      node.classList.add("coach-flash");
-      setTimeout(() => node.classList.remove("coach-flash"), 1100);
+    if (!hint) return;
+    // claim_now hints don't target a member card (the orphan rail owns
+    // them), so they bypass the scroll-to-card effect.
+    if (hint.targetId) {
+      const node = cardRefs.current.get(hint.targetId);
+      if (node) {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        node.classList.add("coach-flash");
+        setTimeout(() => node.classList.remove("coach-flash"), 1100);
+      }
     }
     if (hint.kind === "self_start" && hint.targetId === currentUserId) {
       moveSelfToWorking();
@@ -1275,6 +1398,9 @@ export default function App() {
     } else if (hint.kind === "cheer_working") {
       const target = membersById[hint.targetId];
       if (target) cheerTeammate(target, "🔥");
+    } else if (hint.kind === "claim_now" && hint.taskId) {
+      const orphan = orphanTasks.find((t) => t.id === hint.taskId);
+      if (orphan) claimTask(orphan);
     }
   }
 
@@ -1332,6 +1458,18 @@ export default function App() {
 
         <CoachStrip hints={coachHints} onHintClick={handleCoachClick} />
 
+        {orphanTasks.length > 0 ? (
+          <div className="mt-4">
+            <OrphanTaskRail
+              tasks={orphanTasks}
+              membersById={membersById}
+              eligibilityByTask={orphanEligibilityByTask}
+              onClaim={claimTask}
+              busy={busy}
+            />
+          </div>
+        ) : null}
+
         <ComboMeter
           comboCount={comboCount}
           multiplierActive={multiplierActive}
@@ -1355,9 +1493,17 @@ export default function App() {
               <code className="rounded bg-red-900 px-1 py-0.5">
                 tribe_leader_v3.sql
               </code>
-              , and{" "}
+              ,{" "}
               <code className="rounded bg-red-900 px-1 py-0.5">
                 tribe_leader_v4.sql
+              </code>
+              ,{" "}
+              <code className="rounded bg-red-900 px-1 py-0.5">
+                tribe_leader_v5.sql
+              </code>
+              , and{" "}
+              <code className="rounded bg-red-900 px-1 py-0.5">
+                tribe_leader_v6.sql
               </code>{" "}
               in this Supabase project.
             </p>
@@ -1430,6 +1576,15 @@ export default function App() {
                     onAcceptTask={
                       isCurrent && elig.task?.status === "proposed"
                         ? () => acceptTask(elig.task.id)
+                        : undefined
+                    }
+                    onPassTask={
+                      isCurrent &&
+                      elig.task &&
+                      ["proposed", "accepted", "idle", "working"].includes(
+                        elig.task.status
+                      )
+                        ? () => passTask(elig.task)
                         : undefined
                     }
                     onDeclineTask={

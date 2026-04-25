@@ -139,6 +139,7 @@ export default function MemberCard({
   onCheer,
   onChallenge,
   onAcceptTask,
+  onPassTask,
   onDeclineTask,
   onDemoMarkDone,
   cardRef,
@@ -334,9 +335,28 @@ export default function MemberCard({
             task={task}
             busy={busy}
             onAccept={onAcceptTask}
+            onPass={onPassTask}
             onDecline={onDeclineTask}
           />
         </div>
+      ) : null}
+
+      {/* Pass-it shortcut for assignees who already accepted/are working
+          but realize they can't finish — drops the task into the orphan
+          pool with a +10 bounty stack. */}
+      {isCurrent &&
+      task &&
+      onPassTask &&
+      ["accepted", "working", "idle"].includes(task.status) ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onPassTask}
+          title="Drop this with a +10 bounty so anyone free can pick it up."
+          className="mb-3 inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-amber-300/80 transition hover:text-amber-200 disabled:opacity-50"
+        >
+          <span aria-hidden>↻</span> Pass it
+        </button>
       ) : null}
 
       {sparkIssuer ? (

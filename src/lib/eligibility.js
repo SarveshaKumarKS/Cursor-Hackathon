@@ -292,6 +292,43 @@ export function canChallenge({
   return { ok: false, reason: `${target.name} is not challengeable.` };
 }
 
+// Can `actor` claim a passed-and-orphaned task right now?
+//
+// Rules:
+//   - Task must be unassigned and `proposed`.
+//   - Actor must NOT be in the task's `passed_by` set (no take-backs).
+//   - Actor's calendar must say they're available now (or no calendar
+//     declared, which we treat as always-available for demo simplicity).
+//   - Window state must NOT be `expired` — once the deadline is gone the
+//     task is dead, not orphaned.
+export function canClaim({ actor, task, actorAvailability, when }) {
+  if (!actor) return { ok: false, reason: "Sign in first." };
+  if (!task) return { ok: false, reason: "No task." };
+  if (task.assignee_id) {
+    return { ok: false, reason: "Already taken." };
+  }
+  if (task.status !== "proposed") {
+    return { ok: false, reason: "Not claimable right now." };
+  }
+  const passedBy = Array.isArray(task.passed_by) ? task.passed_by : [];
+  if (passedBy.includes(actor.id)) {
+    return { ok: false, reason: "You already passed this one." };
+  }
+  if (!isInAvailability(actorAvailability, when)) {
+    const nextStart = nextAvailabilityStart(actorAvailability, when);
+    return {
+      ok: false,
+      reason: "You're off-duty.",
+      unlocksAt: nextStart,
+    };
+  }
+  const ws = windowState(task, when);
+  if (ws.kind === "expired") {
+    return { ok: false, reason: "Window has closed." };
+  }
+  return { ok: true };
+}
+
 export function canCheer({ actor, target, targetAvailability, lastCheerAt, when }) {
   if (!actor || !target) return { ok: false, reason: "No target." };
   if (actor.id === target.id) {

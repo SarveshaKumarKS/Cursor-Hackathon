@@ -4,6 +4,7 @@
 import {
   canCheer,
   canChallenge,
+  canClaim,
   canSpark,
   canStart,
   isInAvailability,
@@ -15,6 +16,7 @@ import { fmtCountdown, fmtRelativeWindow } from "./time";
 const PRIORITY = {
   vouch_now: 100,
   self_start: 90,
+  claim_now: 85,
   challenge_now: 80,
   spark_now: 70,
   spark_unlocks: 50,
@@ -29,6 +31,7 @@ export function buildCoachHints({
   tasksByMember,
   availabilityByMember,
   cheerCooldowns,
+  orphanTasks = [],
   when,
   maxHints = 3,
 }) {
@@ -36,7 +39,40 @@ export function buildCoachHints({
   if (!me) return [];
 
   const myTask = tasksByMember.get(currentUserId) ?? null;
+  const myAvail = availabilityByMember.get(currentUserId) ?? [];
   const hints = [];
+
+  // 0. Bounty calls — if I'm idle (or have already finished my own task)
+  // and an orphan I haven't passed is up for grabs, surface the highest
+  // bounty as the top action so the team knows someone can step up.
+  if (
+    !myTask ||
+    myTask.status === "verified" ||
+    myTask.status === "done" ||
+    myTask.status === "declined"
+  ) {
+    const ranked = orphanTasks
+      .slice()
+      .sort((a, b) => (b.bounty_xp ?? 0) - (a.bounty_xp ?? 0));
+    for (const orphan of ranked) {
+      const claim = canClaim({
+        actor: me,
+        task: orphan,
+        actorAvailability: myAvail,
+        when,
+      });
+      if (claim.ok) {
+        const bonus = orphan.bounty_xp ?? 0;
+        hints.push({
+          kind: "claim_now",
+          text: `"${orphan.title}" is up for grabs — claim for +${bonus} bonus XP.`,
+          taskId: orphan.id,
+          priority: PRIORITY.claim_now + Math.min(bonus, 30) / 10,
+        });
+        break;
+      }
+    }
+  }
 
   // 1. Self-card prompts.
   if (myTask) {

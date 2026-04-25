@@ -32,7 +32,12 @@ export default function ProjectBanner({
     PROJECT_KINDS.find((k) => k.id === project.kind) ?? PROJECT_KINDS[0];
   const total = tasks.length;
   const verified = tasks.filter((t) => t.status === "verified").length;
-  const pending = tasks.filter((t) => t.status === "proposed").length;
+  const pending = tasks.filter(
+    (t) => t.status === "proposed" && t.assignee_id
+  ).length;
+  const orphanCount = tasks.filter(
+    (t) => t.status === "proposed" && !t.assignee_id
+  ).length;
   const accepted = tasks.filter((t) =>
     ["accepted", "idle", "working", "done"].includes(t.status)
   ).length;
@@ -65,6 +70,11 @@ export default function ProjectBanner({
             {verified}/{total} verified
             {isPlanning && pending > 0 ? ` · ${pending} awaiting accept` : ""}
             {!isPlanning && accepted > 0 ? ` · ${accepted} in flight` : ""}
+            {orphanCount > 0 ? (
+              <span className="ml-1 text-amber-300">
+                · {orphanCount} up for grabs
+              </span>
+            ) : null}
           </div>
           <button
             type="button"

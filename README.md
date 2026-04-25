@@ -8,7 +8,9 @@ dynamically follows whoever currently holds the most XP.
 
 The v4 release adds a persistent **project board**, **calendar-aware** Spark /
 Challenge gating, and a **Coach strip** that tells each player the right action
-right now.
+right now. v6 layers on **Pass & Pick Up**: any assignee who can't deliver can
+drop their task into a public bounty pool, and a free teammate can step up to
+claim it for an extra one-shot **Stepped Up** XP bonus.
 
 ## Stack
 
@@ -40,6 +42,13 @@ right now.
      and the calendar-aware RPCs (`create_project_with_tasks`, `accept_task`,
      `start_task`, `complete_task`, `vouch_task`, `archive_project`,
      `set_availability`).
+   - `supabase/tribe_leader_v5.sql` — `create_project_with_tasks` now claims
+     the active slot when none is set, so a freshly launched project is
+     immediately visible to assignees.
+   - `supabase/tribe_leader_v6.sql` — Pass & Pick Up bounty system:
+     `bounty_xp` / `passed_at` / `passed_by` / `original_assignee_id` columns
+     plus `pass_task` and `claim_task` RPCs. `reset_tribe_session()` zeroes
+     bounty state and restores the original assignee on rewind.
 4. Start the app:
    ```bash
    npm run dev
@@ -57,9 +66,17 @@ right now.
    2. Pick a template and edit the task list.
    3. Per task: pick assignee, scheduled start/end, deadline.
    4. Review & launch — the project enters `planning`, tasks land as `proposed`.
-3. **Accept tasks.** Each member sees their proposed task on their own card and
-   accepts (or passes). When all proposed tasks are resolved, the project flips
-   to `active` and is set as the tribe's `active_project_id`.
+3. **Accept, Pass, or Decline tasks.** Each member sees their proposed task on
+   their own card with three verbs:
+   - **Accept** — own it.
+   - **Pass** — drop it into the public bounty pool with a stacking **+10 XP**
+     bonus (capped at +30). The task becomes an orphan visible in the **Up
+     for grabs** rail at the top of the board.
+   - **Decline** — kill it for this run. No bounty, slot is forfeit.
+
+   When all proposed tasks are resolved, the project flips to `active` and is
+   set as the tribe's `active_project_id`. Passing during `accepted` or
+   `working` is also supported via the small `↻ Pass it` link on the card.
 4. **Live windows.** Each task has a window. The state machine drives Spark,
    Challenge, Cheer eligibility — see below.
 5. **Verify.** Tasks go `working → done → verified`. When the last task is
@@ -114,6 +131,7 @@ trigger the action.
 | Voucher | **+15** |
 | Crowd Vouch Bonus (2+ vouches on same task within 30s) | **+5** |
 | Successful Challenge (challenged-and-vouched in time) | **+25** |
+| Stepped Up bounty (claim and complete an orphan, per-pass) | **+10** (cap +30) |
 
 XP is multiplied by the live tribe combo multiplier when actions land in quick
 succession.
@@ -127,6 +145,9 @@ succession.
 - **Spark is locked while a teammate is Asleep** (outside availability or
   before their scheduled window starts) — even if the project is active.
 - XP is awarded only at vouch time.
+- **Pass-then-claim-back is blocked.** Once a player passes a task they are
+  recorded in `passed_by` and the DB rejects any attempt by the same player
+  to claim that task — bounty farming via self-pass is impossible.
 
 ## Tribe Pulse
 
@@ -166,10 +187,20 @@ cleared) so the same project can be replayed without rebuilding it.
 5. Blaze waits past 20% of their window → Spark on Blaze unlocks for Ari.
    Tab A clicks Spark → fuchsia streak. Tab B clicks Start Working.
 6. Tab B `Mark Done` → Tab A holds Vouch 600ms → Verified.
-7. Repeat for the second task. The final vouch fires **Project Won** —
-   confetti, crown, gold streaks. Tab A clicks `Archive`.
-8. Click `Reset` to clear XP/log; the project's tasks rewind to `accepted` so
-   you can replay the same demo immediately.
+7. **Pass beat.** Add a third task assigned to a teammate who's "off" — say
+   Cyra. In Cyra's tab click `Pass`. The task slides up into the **Up for
+   grabs** rail at the top of the board with a glowing `+10 XP` chip, and
+   Battle Log records `Cyra passed the baton on "Trash + recycling"`.
+8. **Claim beat.** In Ari's tab the Coach strip now shows
+   `"Trash + recycling" is up for grabs — claim for +10 bonus XP`. Click
+   `Claim` (or the coach pill). Battle Log records `Ari claimed …` and the
+   task drops onto Ari's card as `accepted`.
+9. Ari starts → marks done → someone vouches. Worker XP is
+   `Self-Starter (+70) + Stepped Up (+10) = +80`, with two stacked toasts.
+10. Repeat for the remaining tasks. The final vouch fires **Project Won** —
+    confetti, crown, gold streaks. Tab A clicks `Archive`.
+11. Click `Reset` to clear XP/log; bounty state is zeroed and original
+    assignees are restored, so the same project can be replayed.
 
 ## Project structure
 
@@ -194,15 +225,16 @@ src/
     ProjectWizard.jsx           4-step project creation modal
     AvailabilityEditor.jsx      Per-weekday recurring slots editor
     CoachStrip.jsx              Ranked hints row
-    TaskAcceptance.jsx          Per-task accept/decline panel inside cards
+    TaskAcceptance.jsx          Per-task Accept/Pass/Decline trio inside cards
+    OrphanTaskRail.jsx          "Up for grabs" rail with bounty chips + Claim
   lib/
     supabase.js                 Supabase client
     pulse.js                    Pulse computation + class names
     sound.js                    WebAudio tones
-    xp.js                       XP rule constants + toast labels
+    xp.js                       XP rule constants + toast labels (+ Stepped Up)
     avatars.js                  Per-member SVG avatars
-    eligibility.js              windowState + canSpark/Challenge/Cheer/Start
-    coach.js                    Ranked coach hints for current user
+    eligibility.js              windowState + canSpark/Challenge/Cheer/Start/Claim
+    coach.js                    Ranked coach hints for current user (incl. claim)
     templates.js                Task templates per project kind
     time.js                     Time formatting / weekday helpers
 supabase/
@@ -210,4 +242,6 @@ supabase/
   tribe_leader_v2.sql           v2 features + reset RPC
   tribe_leader_v3.sql           Combo + challenge + events log
   tribe_leader_v4.sql           Projects, tasks, availability, calendar RPCs
+  tribe_leader_v5.sql           create_project_with_tasks claims active slot
+  tribe_leader_v6.sql           Pass / Claim / bounty RPCs + reset extension
 ```

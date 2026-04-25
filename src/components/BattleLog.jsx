@@ -18,6 +18,21 @@ const KIND_META = {
     color: "text-emerald-200",
     verb: "is the First Mover",
   },
+  pass: {
+    icon: "↻",
+    color: "text-amber-200",
+    verb: "passed the baton on",
+  },
+  claim: {
+    icon: "⚑",
+    color: "text-amber-200",
+    verb: "claimed",
+  },
+  project_won: {
+    icon: "🏁",
+    color: "text-emerald-200",
+    verb: "won project for",
+  },
 };
 
 function relativeTime(iso, now) {
@@ -55,6 +70,9 @@ export default function BattleLog({ events, membersById, now }) {
             const target = membersById[e.target_id]?.name;
             const xp = e.payload?.xp;
             const multiplier = e.payload?.multiplier;
+            const taskTitle = e.payload?.task_title;
+            const bountyXp = e.payload?.bounty_xp;
+            const isOrphanEvent = e.kind === "pass" || e.kind === "claim";
 
             return (
               <li
@@ -67,11 +85,24 @@ export default function BattleLog({ events, membersById, now }) {
                 <span className="flex-1 leading-snug text-zinc-200">
                   <strong className="font-bold">{actor}</strong>{" "}
                   <span className="text-zinc-400">{meta.verb}</span>
-                  {target ? (
+                  {isOrphanEvent && taskTitle ? (
+                    <>
+                      {" "}
+                      <em className="font-semibold not-italic text-zinc-100">
+                        “{taskTitle}”
+                      </em>
+                    </>
+                  ) : null}
+                  {!isOrphanEvent && target ? (
                     <>
                       {" "}
                       <strong className="font-bold">{target}</strong>
                     </>
+                  ) : null}
+                  {isOrphanEvent && bountyXp ? (
+                    <span className="ml-1 rounded bg-amber-500/20 px-1 py-0.5 text-[10px] font-bold text-amber-100">
+                      +{bountyXp} bounty
+                    </span>
                   ) : null}
                   {xp ? (
                     <span className="ml-1 rounded bg-cyan-500/15 px-1 py-0.5 text-[10px] font-bold text-cyan-200">
