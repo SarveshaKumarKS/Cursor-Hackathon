@@ -1,0 +1,755 @@
+@import "tailwindcss";
+
+:root {
+  --gold: #f4c430;
+  --gold-soft: #ffd66e;
+  --cyan: #22d3ee;
+  --emerald: #34d399;
+  --fuchsia: #e879f9;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+  background: #02040a;
+  color: #f4f4f5;
+  overflow-x: hidden;
+}
+
+/* ----- Tribe Pulse backgrounds ----- */
+
+.pulse-dormant {
+  background:
+    radial-gradient(1000px 600px at 80% -10%, rgba(63, 63, 70, 0.35), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(39, 39, 42, 0.4), transparent 60%),
+    linear-gradient(135deg, #0b0f17 0%, #0a0a0a 100%);
+}
+
+.pulse-awakening {
+  background:
+    radial-gradient(900px 600px at 80% -10%, rgba(99, 102, 241, 0.35), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(67, 56, 202, 0.35), transparent 60%),
+    linear-gradient(135deg, #0a0e1f 0%, #0b0824 100%);
+  animation: awakeningWash 4s ease-in-out infinite;
+}
+
+@keyframes awakeningWash {
+  0%,
+  100% {
+    filter: brightness(0.95);
+  }
+  50% {
+    filter: brightness(1.08);
+  }
+}
+
+.pulse-active {
+  background:
+    radial-gradient(900px 600px at 80% -10%, rgba(34, 211, 238, 0.35), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(59, 130, 246, 0.35), transparent 60%),
+    linear-gradient(135deg, #061226 0%, #07142a 100%);
+  box-shadow: inset 0 0 200px rgba(34, 211, 238, 0.2);
+}
+
+.pulse-frenzy {
+  background:
+    linear-gradient(
+      125deg,
+      rgba(34, 211, 238, 0.3) 0%,
+      rgba(232, 121, 249, 0.3) 35%,
+      rgba(34, 211, 238, 0.3) 70%,
+      rgba(232, 121, 249, 0.3) 100%
+    ),
+    linear-gradient(135deg, #061226 0%, #220a2a 100%);
+  background-size: 300% 300%;
+  animation: frenzySweep 3s linear infinite;
+}
+
+@keyframes frenzySweep {
+  0% {
+    background-position: 0% 0%, 0 0;
+  }
+  100% {
+    background-position: 100% 100%, 0 0;
+  }
+}
+
+/* ----- Status badge animations ----- */
+
+.badge-idle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 100%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 6s ease-in-out infinite;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  60%,
+  100% {
+    background-position: -150% 0;
+  }
+}
+
+.badge-working {
+  box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.7);
+  animation: workingGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes workingGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(34, 211, 238, 0);
+  }
+}
+
+.badge-done {
+  position: relative;
+}
+
+.badge-done::before {
+  content: "✦";
+  position: absolute;
+  font-size: 10px;
+  color: #6ee7b7;
+  top: -8px;
+  right: -2px;
+  animation: floatSparkle 2.4s ease-in-out infinite;
+}
+
+@keyframes floatSparkle {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateY(-6px) scale(1.2);
+    opacity: 1;
+  }
+}
+
+.card-vouched-flash {
+  animation: vouchedFlash 1500ms ease-out;
+}
+
+@keyframes vouchedFlash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.18);
+  }
+  60% {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    background: transparent;
+  }
+}
+
+/* ----- Member card glows for the leader ----- */
+
+.leader-ring {
+  box-shadow:
+    0 0 0 2px rgba(244, 196, 48, 0.85),
+    0 0 38px rgba(244, 196, 48, 0.45);
+  border-color: rgba(244, 196, 48, 0.85) !important;
+}
+
+.current-user-ring {
+  box-shadow: inset 0 0 0 2px rgba(34, 211, 238, 0.7);
+}
+
+/* ----- Crowning Ceremony ----- */
+
+.ceremony-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 4, 10, 0.55);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ceremonyDim 200ms ease-out;
+}
+
+.ceremony-card {
+  position: relative;
+  background: linear-gradient(140deg, #1a0f00 0%, #2a1a00 100%);
+  border: 2px solid rgba(244, 196, 48, 0.9);
+  border-radius: 18px;
+  padding: 26px 36px;
+  text-align: center;
+  transform: scale(0.85);
+  animation: ceremonyLift 600ms cubic-bezier(0.2, 1.2, 0.4, 1) forwards;
+  box-shadow:
+    0 0 80px rgba(244, 196, 48, 0.55),
+    0 0 200px rgba(244, 196, 48, 0.25);
+}
+
+@keyframes ceremonyLift {
+  0% {
+    transform: scale(0.8) translateY(30px);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes ceremonyDim {
+  from {
+    background: rgba(2, 4, 10, 0);
+  }
+  to {
+    background: rgba(2, 4, 10, 0.55);
+  }
+}
+
+.crown-drop {
+  font-size: 64px;
+  display: inline-block;
+  animation: crownDrop 700ms cubic-bezier(0.4, 1.6, 0.4, 1) 250ms both;
+  filter: drop-shadow(0 0 14px rgba(244, 196, 48, 0.7));
+}
+
+@keyframes crownDrop {
+  0% {
+    transform: translateY(-220px) rotate(-15deg);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(8px) rotate(2deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
+  }
+}
+
+.ceremony-title {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  background: linear-gradient(90deg, #ffd66e 0%, #f4c430 50%, #ffd66e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin: 12px 0 4px;
+  animation: titleGlow 1500ms ease-in-out infinite alternate;
+}
+
+@keyframes titleGlow {
+  from {
+    text-shadow: 0 0 12px rgba(244, 196, 48, 0.5);
+  }
+  to {
+    text-shadow: 0 0 28px rgba(244, 196, 48, 0.85);
+  }
+}
+
+.ceremony-subtitle {
+  color: #fde68a;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+/* ----- Confetti particle ----- */
+
+.confetti-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 70;
+  overflow: hidden;
+}
+
+.confetti {
+  position: absolute;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  top: -20px;
+  animation: confettiFall linear forwards;
+}
+
+@keyframes confettiFall {
+  0% {
+    transform: translateY(0) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(110vh) rotate(720deg);
+    opacity: 0.8;
+  }
+}
+
+/* ----- Spark streak overlay ----- */
+
+.streak-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.streak-line {
+  stroke: url(#sparkGradient);
+  stroke-width: 4;
+  fill: none;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 8px rgba(232, 121, 249, 0.85));
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: streakDraw 600ms ease-out forwards;
+}
+
+@keyframes streakDraw {
+  0% {
+    stroke-dashoffset: 600;
+    opacity: 1;
+  }
+  60% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+/* ----- XP Toast ----- */
+
+.toast-enter {
+  animation: toastIn 200ms ease-out;
+}
+
+@keyframes toastIn {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* ----- Verified stamp on vouch ----- */
+
+.verified-stamp {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-weight: 900;
+  letter-spacing: 0.25em;
+  font-size: 28px;
+  color: rgba(244, 196, 48, 0.95);
+  border: 4px solid rgba(244, 196, 48, 0.95);
+  border-radius: 14px;
+  transform: scale(2) rotate(-12deg);
+  opacity: 0;
+  animation: verifiedSlam 700ms ease-out forwards;
+  text-shadow: 0 0 14px rgba(244, 196, 48, 0.7);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+@keyframes verifiedSlam {
+  0% {
+    transform: scale(2) rotate(-12deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.95) rotate(-12deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(-12deg);
+    opacity: 0;
+  }
+}
+
+/* ----- Vouch hold ring ----- */
+
+.hold-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.hold-ring svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+/* ----- Subtle gold halo on the onboarding CTA ----- */
+
+.cta-halo {
+  animation: ctaHalo 2.4s ease-in-out infinite;
+}
+
+@keyframes ctaHalo {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(244, 196, 48, 0.0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(244, 196, 48, 0.45);
+  }
+}
+
+/* ----- Background FX (embers, grid, vignette) ----- */
+
+.bg-fx {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.bg-grid {
+  position: absolute;
+  inset: -2px;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, black 50%, transparent 80%);
+  opacity: 0.55;
+}
+
+.bg-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
+
+.ember {
+  position: absolute;
+  bottom: -10px;
+  border-radius: 50%;
+  opacity: 0;
+  animation: emberRise linear infinite;
+  --drift: 0vw;
+}
+
+@keyframes emberRise {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(var(--drift), -110vh, 0);
+    opacity: 0;
+  }
+}
+
+/* ----- Avatars ----- */
+
+.avatar-breathing {
+  animation: avatarBreath 5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes avatarBreath {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+.avatar-pulsing {
+  animation: avatarPulse 1.4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes avatarPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+.avatar-leader-ring {
+  background: conic-gradient(
+    from 0deg,
+    rgba(244, 196, 48, 0) 0%,
+    rgba(244, 196, 48, 0.95) 25%,
+    rgba(255, 214, 110, 0.95) 50%,
+    rgba(244, 196, 48, 0.95) 75%,
+    rgba(244, 196, 48, 0) 100%
+  );
+  filter: blur(2px);
+  animation: leaderRingSpin 4s linear infinite;
+  z-index: -1;
+}
+
+@keyframes leaderRingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.avatar-sparkle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #6ee7b7;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #6ee7b7;
+  pointer-events: none;
+  animation: avatarSparkle 1.8s ease-in-out infinite;
+}
+.avatar-sparkle-a {
+  top: -4px;
+  left: 30%;
+  animation-delay: 0s;
+}
+.avatar-sparkle-b {
+  bottom: -2px;
+  right: 18%;
+  animation-delay: 0.6s;
+}
+.avatar-sparkle-c {
+  top: 38%;
+  right: -4px;
+  animation-delay: 1.2s;
+}
+
+@keyframes avatarSparkle {
+  0%,
+  100% {
+    transform: scale(0) translate(0, 0);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.2) translate(2px, -4px);
+    opacity: 1;
+  }
+}
+
+/* ----- Cards: 3D tilt + entrance ----- */
+
+.tilt-card {
+  transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition:
+    transform 200ms ease-out,
+    box-shadow 200ms ease-out,
+    border-color 200ms ease-out,
+    background 300ms ease-out;
+  will-change: transform;
+}
+
+.tilt-card-glare {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    300px 200px at var(--gx, 50%) var(--gy, 50%),
+    rgba(255, 255, 255, 0.12),
+    transparent 60%
+  );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  mix-blend-mode: screen;
+}
+
+.tilt-card:hover .tilt-card-glare {
+  opacity: 1;
+}
+
+.card-enter {
+  animation: cardEnter 500ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ----- Cheers: floating emoji rise ----- */
+
+.cheer-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 55;
+}
+
+.cheer {
+  position: absolute;
+  font-size: 30px;
+  animation: cheerRise 1.6s ease-out forwards;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.5));
+  --cheer-drift: 0px;
+}
+
+@keyframes cheerRise {
+  0% {
+    transform: translate(-50%, 0) scale(0.6);
+    opacity: 0;
+  }
+  20% {
+    transform: translate(-50%, -10px) scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--cheer-drift)), -120px) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ----- Combo Meter glow ----- */
+
+.combo-active {
+  animation: comboPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes comboPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 30px rgba(232, 121, 249, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 60px rgba(232, 121, 249, 0.7);
+  }
+}
+
+/* ----- Challenge timer ring ----- */
+
+.challenge-banner {
+  background: linear-gradient(
+    90deg,
+    rgba(249, 115, 22, 0.25),
+    rgba(244, 196, 48, 0.25)
+  );
+  animation: challengePulse 1.8s ease-in-out infinite;
+}
+
+@keyframes challengePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(249, 115, 22, 0.55);
+  }
+}
+
+/* ----- XP gain pop on cards ----- */
+
+.xp-pop {
+  position: absolute;
+  font-weight: 900;
+  font-size: 22px;
+  color: #fde68a;
+  text-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.7),
+    0 0 14px rgba(244, 196, 48, 0.7);
+  animation: xpPop 1.2s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes xpPop {
+  0% {
+    transform: translate(-50%, 0) scale(0.6);
+    opacity: 0;
+  }
+  20% {
+    transform: translate(-50%, -10px) scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -60px) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ----- Cheer button bounce ----- */
+
+.btn-cheer:hover {
+  transform: scale(1.08);
+}
+
+.btn-cheer:active {
+  transform: scale(0.94);
+}
+
+/* ----- Reduced motion: disable hero animations ----- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.05ms !important;
+  }
+
+  .pulse-frenzy,
+  .pulse-awakening,
+  .ember,
+  .avatar-breathing,
+  .avatar-pulsing,
+  .avatar-leader-ring,
+  .avatar-sparkle,
+  .combo-active {
+    animation: none !important;
+  }
+
+  .tilt-card {
+    transform: none !important;
+  }
+}
